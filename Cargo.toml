@@ -1,0 +1,19 @@
+[package]
+name = "tiny-database"
+version = "1.0.0"
+edition = "2024"
+authors = ["Bálint Máté <balint.mate.2006@gmail.com>"]
+description = "A small and simple embedded database"
+repository = "https://github.com/Zodey-hub/tiny-database"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["database", "embedded", "index", "redb", "rkyv"]
+categories = ["database-implementations"]
+
+[dependencies]
+redb = "4"
+rkyv = { version = "0.8", features = ["bytecheck", "unaligned"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
