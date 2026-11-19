@@ -8,8 +8,9 @@ use std::{
 };
 
 use redb::{
-    MultimapTable, MultimapTableDefinition, ReadableDatabase, ReadableMultimapTable, ReadableTable,
-    ReadableTableMetadata, TableDefinition, TableError, WriteTransaction,
+    MultimapTable, MultimapTableDefinition, MultimapTableHandle, ReadableDatabase,
+    ReadableMultimapTable, ReadableTable, ReadableTableMetadata, TableDefinition, TableError,
+    WriteTransaction,
 };
 use rkyv::rancor;
 
@@ -225,6 +226,50 @@ impl Database {
         };
 
         Ok(rows.len()?)
+    }
+
+    /// Rebuilds every index of the type from its stored records, after a change of [`Record::index_keys`].
+    ///
+    /// The index tables of the type are dropped first, so an index that `index_keys` no longer returns disappears; a table is of the type if its name starts with `T::TABLE` and a dot. Either the whole rebuild is done or nothing changes.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Corrupt`] if the stored bytes of a record are not a valid `T`.
+    /// - One of the redb variants if the database cannot be written.
+    pub fn rebuild_indexes<T: Record>(&self) -> Result<()> {
+        let transaction = self.database.begin_write()?;
+
+        // the same prefix as in `index_table_name`, with the dot, so that the indexes of a table named `users2` stay
+        let prefix = format!("{}.", T::TABLE);
+        let index_tables: Vec<String> = transaction
+            .list_multimap_tables()?
+            .map(|table| table.name().to_owned())
+            .filter(|name| name.starts_with(&prefix))
+            .collect();
+
+        for name in &index_tables {
+            let definition = MultimapTableDefinition::<&[u8], u64>::new(name);
+            transaction.delete_multimap_table(definition)?;
+        }
+
+        let rows = transaction.open_table(rows_definition::<T>())?;
+
+        for row in rows.iter()? {
+            let (id, bytes) = row?;
+            let id = id.value();
+            let record = decode::<T>(id, bytes.value())?;
+
+            for (index, key) in record.index_keys() {
+                let mut entries = open_index::<T>(&transaction, &index)?;
+                entries.insert(key.as_slice(), id)?;
+            }
+        }
+
+        // the table borrows the transaction, it has to be closed before the commit
+        drop(rows);
+        transaction.commit()?;
+
+        Ok(())
     }
 
     /// Calls `read` on the archived row `id`, or returns `None` if there is no such row.

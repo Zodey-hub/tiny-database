@@ -2,7 +2,7 @@
 
 A small embedded record store built on `redb` (storage) and `rkyv` (serialization).
 It keeps typed records under a `u64` id in one file, with secondary indexes for equality, range and string prefix lookups.
-A query language, joins, migrations and unique constraints are left to the caller.
+A query language, joins, migrations of the records and unique constraints are left to the caller.
 
 ## Example
 
@@ -16,6 +16,7 @@ Every read comes in two forms:
 
 `insert_many` stores several records in one transaction: one commit instead of one per record, and either all of them are stored or none.
 `count` returns the number of records of a type without reading any of them.
+After a change of `index_keys`, `rebuild_indexes` builds the indexes of a type again from its records: until then `find` and `range` answer from the old keys.
 
 The rows are read in place, with no copy: the crate enables the `unaligned` feature of rkyv for this, which applies to every use of rkyv in the program.
 

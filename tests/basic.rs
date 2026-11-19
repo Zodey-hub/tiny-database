@@ -1,8 +1,8 @@
 //! The behavior of the public API, each test on a database in its own temporary directory.
 
 use redb::{
-    MultimapTableDefinition, ReadableDatabase, ReadableMultimapTable, ReadableTable,
-    TableDefinition,
+    MultimapTableDefinition, MultimapTableHandle, ReadableDatabase, ReadableMultimapTable,
+    ReadableTable, TableDefinition,
 };
 use rkyv::{Archive, Deserialize, Serialize};
 use tempfile::TempDir;
@@ -423,6 +423,57 @@ fn insert_many_that_fails_on_a_later_record_stores_none() -> Result<()> {
     assert!(matches!(error, Error::Table(_)), "{error:?}");
     assert_eq!(count, 0);
     Ok(())
+}
+
+#[test]
+fn rebuild_indexes_replaces_the_stale_index_entries() -> Result<()> {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("test.redb");
+    let db = Database::open(&path)?;
+    db.insert(&User::new(1, "Alice", 30, &["admin"]))?;
+    drop(db);
+    // what an older version of `index_keys` could have left behind: a wrong key, a missing key, a removed index
+    let database = redb::Database::create(&path)?;
+    let transaction = database.begin_write()?;
+    {
+        let mut names = transaction.open_multimap_table(user_index("users.name"))?;
+        names.remove_all(key::enc("Alice").as_slice())?;
+        names.insert(key::enc("Old Alice").as_slice(), 1)?;
+        let mut removed = transaction.open_multimap_table(user_index("users.removed"))?;
+        removed.insert(key::enc("x").as_slice(), 1)?;
+        let mut other_table = transaction.open_multimap_table(user_index("users2.name"))?;
+        other_table.insert(key::enc("x").as_slice(), 1)?;
+    }
+    transaction.commit()?;
+    drop(database);
+    let db = Database::open(&path)?;
+
+    db.rebuild_indexes::<User>()?;
+    let alices = db.find::<User>(UserIndex::Name, &key::enc("Alice"))?;
+    let old_alices = db.find::<User>(UserIndex::Name, &key::enc("Old Alice"))?;
+    let admins = db.find::<User>(UserIndex::Tag, &key::enc("admin"))?;
+    drop(db);
+    let database = redb::Database::create(&path)?;
+    let index_tables: Vec<String> = database
+        .begin_read()?
+        .list_multimap_tables()?
+        .map(|table| table.name().to_owned())
+        .collect();
+
+    assert_eq!(ids(&alices), [1]);
+    assert_eq!(old_alices, []);
+    assert_eq!(ids(&admins), [1]);
+    assert_eq!(
+        index_tables,
+        ["users.age", "users.name", "users.tag", "users2.name"],
+        "the removed index is dropped, the index of another table stays"
+    );
+    Ok(())
+}
+
+/// The definition of the multimap of a user index named `name`, to change it behind the back of the library.
+fn user_index(name: &str) -> MultimapTableDefinition<'_, &'static [u8], u64> {
+    MultimapTableDefinition::new(name)
 }
 
 #[test]
