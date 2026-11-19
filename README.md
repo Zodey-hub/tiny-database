@@ -21,7 +21,9 @@ After a change of the record type, `migrate::<UserV1, UserV2>(convert)` converts
 
 The rows are read in place, with no copy: the crate enables the `unaligned` feature of rkyv for this, which applies to every use of rkyv in the program.
 
-```rust,no_run
+```rust
+use std::error::Error;
+
 use tiny_database::rkyv::{Archive, Deserialize, Serialize};
 use tiny_database::{Database, Index, Record, key};
 
@@ -71,8 +73,9 @@ fn name_age_key(name: &str, age: u8) -> Vec<u8> {
     [key::enc(name), key::enc(age)].concat()
 }
 
-fn main() -> tiny_database::Result<()> {
-    let db = Database::open("app.redb")?;
+fn main() -> Result<(), Box<dyn Error>> {
+    let directory = tempfile::tempdir()?;
+    let db = Database::open(directory.path().join("app.redb"))?;
 
     db.insert(&User { id: 1, name: "Alice".to_owned(), age: 30 })?;
     db.insert_many(&[
