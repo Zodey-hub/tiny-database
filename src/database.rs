@@ -8,8 +8,8 @@ use std::{
 };
 
 use redb::{
-    MultimapTable, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
-    TableError, WriteTransaction,
+    MultimapTable, MultimapTableDefinition, ReadableDatabase, ReadableMultimapTable, ReadableTable,
+    TableDefinition, TableError, WriteTransaction,
 };
 use rkyv::rancor;
 
@@ -250,7 +250,7 @@ impl Database {
         };
 
         let mut ids = Vec::new();
-        for entry in entries.range::<&[u8]>(bounds)? {
+        for entry in entries.range(bounds)? {
             let (_key, ids_of_key) = entry?;
 
             for id in ids_of_key {

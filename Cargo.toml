@@ -1,6 +1,6 @@
 [package]
 name = "tiny-database"
-version = "1.1.0"
+version = "2.0.0"
 edition = "2024"
 authors = ["Bálint Máté <balint.mate.2006@gmail.com>"]
 description = "A small and simple embedded database"
@@ -11,7 +11,7 @@ keywords = ["database", "embedded", "index", "redb", "rkyv"]
 categories = ["database-implementations"]
 
 [dependencies]
-redb = "4"
+redb = "5"
 rkyv = { version = "0.8", features = ["bytecheck", "unaligned"] }
 thiserror = "2"
 

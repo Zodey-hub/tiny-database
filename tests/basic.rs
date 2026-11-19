@@ -1,6 +1,9 @@
 //! The behavior of the public API, each test on a database in its own temporary directory.
 
-use redb::{MultimapTableDefinition, ReadableDatabase, TableDefinition};
+use redb::{
+    MultimapTableDefinition, ReadableDatabase, ReadableMultimapTable, ReadableTable,
+    TableDefinition,
+};
 use rkyv::{Archive, Deserialize, Serialize};
 use tempfile::TempDir;
 use tiny_database::{Database, Error, Index, Record, Result, key};
