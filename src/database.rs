@@ -103,7 +103,7 @@ impl Database {
     pub fn delete<T: Record>(&self, id: u64) -> Result<bool> {
         let transaction = self.database.begin_write()?;
 
-        let existed = remove_row::<T>(&transaction, id)?;
+        let existed = remove_row::<T>(&transaction, id)?.is_some();
 
         transaction.commit()?;
 
@@ -272,6 +272,39 @@ impl Database {
         Ok(())
     }
 
+    /// Replaces every record of `Old` with the `New` record that `convert` makes of it, with the index entries of `New`, in one transaction.
+    ///
+    /// For a change of the record type: `Old` reads the stored bytes as they are, `New` is the type from now on. Either every record is converted or none.
+    /// The two types normally share their [`Record::TABLE`]; if they do not, the records move to the table of `New` and the table of `Old` is left empty.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Corrupt`] if the stored bytes of a record are not a valid `Old`, or `convert` gives an id that a record not yet converted still has.
+    /// - [`Error::Encode`] if a new record cannot be serialized.
+    /// - One of the redb variants if the database cannot be written.
+    pub fn migrate<Old: Record, New: Record>(
+        &self,
+        mut convert: impl FnMut(Old) -> New,
+    ) -> Result<()> {
+        let transaction = self.database.begin_write()?;
+
+        // a table cannot change while it is being iterated, only the ids are collected first
+        let ids = row_ids::<Old>(&transaction)?;
+
+        for id in ids {
+            let record = remove_row::<Old>(&transaction, id)?.ok_or_else(|| corrupt::<Old>(id))?;
+            let new_record = convert(record);
+            let bytes = rkyv::to_bytes::<rancor::Error>(&new_record).map_err(Error::Encode)?;
+
+            remove_row::<New>(&transaction, new_record.id())?;
+            insert_row(&transaction, &new_record, &bytes)?;
+        }
+
+        transaction.commit()?;
+
+        Ok(())
+    }
+
     /// Calls `read` on the archived row `id`, or returns `None` if there is no such row.
     fn read_row<T: Record, R>(
         &self,
@@ -371,12 +404,12 @@ impl Database {
     }
 }
 
-/// Removes the row of `id` and its index entries, and returns whether the row existed.
-fn remove_row<T: Record>(transaction: &WriteTransaction, id: u64) -> Result<bool> {
+/// Removes the row of `id` and its index entries, and returns the removed record, or `None` if there was no such row.
+fn remove_row<T: Record>(transaction: &WriteTransaction, id: u64) -> Result<Option<T>> {
     let mut rows = transaction.open_table(rows_definition::<T>())?;
 
     let Some(old_row) = rows.remove(id)? else {
-        return Ok(false);
+        return Ok(None);
     };
     let old_record = decode::<T>(id, old_row.value())?;
 
@@ -386,7 +419,7 @@ fn remove_row<T: Record>(transaction: &WriteTransaction, id: u64) -> Result<bool
         entries.remove(key.as_slice(), id)?;
     }
 
-    Ok(true)
+    Ok(Some(old_record))
 }
 
 /// Stores the serialized `record` and its index entries.
@@ -469,4 +502,17 @@ fn open_index<'txn, T: Record>(
     let entries = transaction.open_multimap_table(definition)?;
 
     Ok(entries)
+}
+
+/// Returns the ids of every row of `T`, in order.
+fn row_ids<T: Record>(transaction: &WriteTransaction) -> Result<Vec<u64>> {
+    let rows = transaction.open_table(rows_definition::<T>())?;
+
+    let mut ids = Vec::new();
+    for row in rows.iter()? {
+        let (id, _bytes) = row?;
+        ids.push(id.value());
+    }
+
+    Ok(ids)
 }
