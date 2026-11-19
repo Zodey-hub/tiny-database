@@ -1,7 +1,7 @@
 # tiny-database
 
 A small embedded record store built on `redb` (storage) and `rkyv` (serialization).
-It keeps typed records under a `u64` id in one file, with secondary indexes for equality and range lookups.
+It keeps typed records under a `u64` id in one file, with secondary indexes for equality, range and string prefix lookups.
 A query language, joins, migrations and unique constraints are left to the caller.
 
 ## Example
@@ -82,6 +82,9 @@ fn main() -> tiny_database::Result<()> {
     // deserialized: a range of one field
     let young = db.range::<User>(UserIndex::Age, key::enc(18u8)..=key::enc(30u8))?;
 
+    // deserialized: the names that start with a prefix
+    let als = db.range::<User>(UserIndex::Name, key::prefix_range("Al"))?;
+
     // deserialized: equality on the first field of the composite index, a range on the second one
     let young_alices = name_age_key("Alice", 18)..=name_age_key("Alice", 30);
     let young_alices = db.range::<User>(UserIndex::NameAge, young_alices)?;
@@ -98,6 +101,7 @@ fn main() -> tiny_database::Result<()> {
     assert_eq!(first.map(|user| user.age), Some(30));
     assert_eq!(alices.len(), 2);
     assert_eq!(young.len(), 2);
+    assert_eq!(als.len(), 2);
     assert_eq!(young_alices.len(), 1);
     assert_eq!(first_name.as_deref(), Some("Alice"));
     assert_eq!(old_ids, [2]);

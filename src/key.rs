@@ -8,6 +8,8 @@
 //! No encoding is a prefix of another one of the same type, so the encodings of several values can be concatenated into one multi-field key.
 //! `usize` and `isize` have no encoding, their width depends on the platform: cast them to a fixed-width integer.
 
+use std::ops::Range;
+
 /// The bytes that replace a `0x00` byte of a string.
 const ESCAPED_ZERO: [u8; 2] = [0x00, 0xFF];
 
@@ -21,6 +23,20 @@ pub fn enc<K: IndexKey>(value: K) -> Vec<u8> {
     let mut encoded = Vec::new();
     value.encode(&mut encoded);
     encoded
+}
+
+/// The range of the encoded strings that start with `prefix`, for [`Database::range`](crate::Database::range).
+///
+/// `key::prefix_range("Al")` holds `key::enc("Al")` and `key::enc("Alice")`, but not `key::enc("Bob")` or `key::enc("A")`.
+pub fn prefix_range(prefix: &str) -> Range<Vec<u8>> {
+    let mut start = Vec::with_capacity(prefix.len());
+    push_escaped(prefix, &mut start);
+
+    // after the prefix comes a UTF-8 byte, an escaped zero or the terminator, all below 0xFF, which UTF-8 never contains
+    let mut end = start.clone();
+    end.push(0xFF);
+
+    start..end
 }
 
 /// A value that can be used as an index key.
@@ -44,15 +60,7 @@ impl IndexKey for bool {
 impl IndexKey for str {
     fn encode(&self, out: &mut Vec<u8>) {
         out.reserve(self.len() + TERMINATOR.len());
-
-        for byte in self.bytes() {
-            if byte == 0x00 {
-                out.extend_from_slice(&ESCAPED_ZERO);
-            } else {
-                out.push(byte);
-            }
-        }
-
+        push_escaped(self, out);
         out.extend_from_slice(&TERMINATOR);
     }
 }
@@ -89,6 +97,17 @@ macro_rules! impl_index_key_for_signed {
 
 impl_index_key_for_unsigned!(u8, u16, u32, u64, u128);
 impl_index_key_for_signed!(i8, i16, i32, i64, i128);
+
+/// Appends the UTF-8 bytes of `text` to `out` with every `0x00` escaped, without the terminator.
+fn push_escaped(text: &str, out: &mut Vec<u8>) {
+    for byte in text.bytes() {
+        if byte == 0x00 {
+            out.extend_from_slice(&ESCAPED_ZERO);
+        } else {
+            out.push(byte);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -147,6 +166,27 @@ mod tests {
 
         assert_eq!(enc(&owned), enc("a\0b"));
         assert_eq!(enc(owned), enc("a\0b"));
+    }
+
+    #[test]
+    fn a_prefix_range_holds_exactly_the_strings_with_the_prefix() {
+        let strings = [
+            "", "a", "al", "Al", "Al\0", "Ala", "Alice", "Al\u{7f}", "Alé", "Al日本", "Am", "A",
+            "Ak", "B", "\0", "A\0l",
+        ];
+        let prefixes = ["Al", "", "Al\0", "\0", "日"];
+
+        for prefix in prefixes {
+            let range = prefix_range(prefix);
+
+            for string in strings {
+                assert_eq!(
+                    range.contains(&enc(string)),
+                    string.starts_with(prefix),
+                    "prefix {prefix:?}, string {string:?}"
+                );
+            }
+        }
     }
 
     /// Asserts that sorting by the concatenated keys of the fields gives the same order as sorting the pairs.
