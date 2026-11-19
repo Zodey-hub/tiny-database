@@ -60,9 +60,7 @@ impl Database {
 
         for record in records {
             let bytes = rkyv::to_bytes::<rancor::Error>(record).map_err(Error::Encode)?;
-
-            remove_row::<T>(&transaction, record.id())?;
-            insert_row(&transaction, record, &bytes)?;
+            replace_row(&transaction, record, &bytes)?;
         }
 
         transaction.commit()?;
@@ -304,9 +302,7 @@ impl Database {
             let record = remove_row::<Old>(&transaction, id)?.ok_or_else(|| corrupt::<Old>(id))?;
             let new_record = convert(record);
             let bytes = rkyv::to_bytes::<rancor::Error>(&new_record).map_err(Error::Encode)?;
-
-            remove_row::<New>(&transaction, new_record.id())?;
-            insert_row(&transaction, &new_record, &bytes)?;
+            replace_row(&transaction, &new_record, &bytes)?;
         }
 
         transaction.commit()?;
@@ -375,9 +371,12 @@ impl Database {
             }
         }
 
-        // a record with several keys within the bounds has an entry under each of them
-        let mut seen = HashSet::with_capacity(ids.len());
-        ids.retain(|id| seen.insert(*id));
+        // a record with several keys within the bounds has an entry under each of them, but the ids under one key are distinct
+        let single_key = matches!(bounds, (Bound::Included(s), Bound::Included(e)) if s == e);
+        if !single_key {
+            let mut seen = HashSet::with_capacity(ids.len());
+            ids.retain(|id| seen.insert(*id));
+        }
 
         let rows = transaction.open_table(rows_definition::<T>())?;
 
@@ -431,20 +430,39 @@ fn remove_row<T: Record>(transaction: &WriteTransaction, id: u64) -> Result<Opti
     Ok(Some(old_record))
 }
 
-/// Stores the serialized `record` and its index entries.
-fn insert_row<T: Record>(transaction: &WriteTransaction, record: &T, bytes: &[u8]) -> Result<()> {
+/// Stores the serialized `record`, replacing the row with the same id, and updates the index entries that changed.
+fn replace_row<T: Record>(transaction: &WriteTransaction, record: &T, bytes: &[u8]) -> Result<()> {
     let id = record.id();
     let mut rows = transaction.open_table(rows_definition::<T>())?;
 
-    rows.insert(id, bytes)?;
+    let old_keys = match rows.insert(id, bytes)? {
+        Some(old_row) => decode::<T>(id, old_row.value())?.index_keys(),
+        None => Vec::new(),
+    };
 
-    for (index, key) in record.index_keys() {
-        let mut entries = open_index::<T>(transaction, &index)?;
+    let new_keys = record.index_keys();
 
-        entries.insert(key.as_slice(), id)?;
+    // an entry that both the old and the new record have stays as it is
+    for (index, key) in &old_keys {
+        if !contains(&new_keys, index, key) {
+            open_index::<T>(transaction, index)?.remove(key.as_slice(), id)?;
+        }
+    }
+
+    for (index, key) in &new_keys {
+        if !contains(&old_keys, index, key) {
+            open_index::<T>(transaction, index)?.insert(key.as_slice(), id)?;
+        }
     }
 
     Ok(())
+}
+
+/// Returns whether `entries` contain the entry of `key` in `index`.
+fn contains<I: Index>(entries: &[(I, Vec<u8>)], index: &I, key: &[u8]) -> bool {
+    entries
+        .iter()
+        .any(|(other_index, other_key)| other_index.name() == index.name() && other_key == key)
 }
 
 /// Turns a table that does not exist into `None`.

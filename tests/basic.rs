@@ -617,6 +617,52 @@ fn index_entries_are_stored_in_a_multimap_per_index() -> Result<()> {
 }
 
 #[test]
+fn overwrite_leaves_exactly_the_index_entries_of_the_new_record() -> Result<()> {
+    // an overwrite touches only the entries that differ, the unchanged, duplicate and reordered ones included
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("test.redb");
+    let db = Database::open(&path)?;
+    db.insert(&User::new(1, "Alice", 30, &["b", "a", "a", "c"]))?;
+    db.insert(&User::new(2, "Bob", 30, &["a"]))?;
+
+    db.insert_many(&[
+        User::new(1, "Alice", 31, &["c", "d", "a"]),
+        User::new(2, "Bob", 30, &["a", "a"]),
+    ])?;
+    drop(db);
+    let database = redb::Database::create(&path)?;
+    let transaction = database.begin_read()?;
+    let entries_of = |name| -> Result<Vec<(Vec<u8>, u64)>> {
+        let table = transaction.open_multimap_table(user_index(name))?;
+        let mut entries = Vec::new();
+        for entry in table.iter()? {
+            let (key, ids) = entry?;
+            for id in ids {
+                entries.push((key.value().to_vec(), id?.value()));
+            }
+        }
+        Ok(entries)
+    };
+
+    let tags = entries_of("users.tag")?;
+    let ages = entries_of("users.age")?;
+    let names = entries_of("users.name")?;
+
+    assert_eq!(
+        tags,
+        [
+            (key::enc("a"), 1),
+            (key::enc("a"), 2),
+            (key::enc("c"), 1),
+            (key::enc("d"), 1)
+        ]
+    );
+    assert_eq!(ages, [(key::enc(30u8), 2), (key::enc(31u8), 1)]);
+    assert_eq!(names, [(key::enc("Alice"), 1), (key::enc("Bob"), 2)]);
+    Ok(())
+}
+
+#[test]
 fn rows_are_stored_as_unaligned_rkyv_bytes() -> Result<()> {
     // the layout of the file is a contract, and a view reads a row in place at any offset of a page
     let directory = tempfile::tempdir().unwrap();
