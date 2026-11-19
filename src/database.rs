@@ -39,6 +39,7 @@ impl Database {
     ///
     /// - [`Error::Encode`] if the record cannot be serialized.
     /// - [`Error::Corrupt`] if the stored bytes of the replaced record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
     pub fn insert<T: Record>(&self, record: &T) -> Result<()> {
         self.insert_many(slice::from_ref(record))
@@ -52,6 +53,7 @@ impl Database {
     ///
     /// - [`Error::Encode`] if a record cannot be serialized.
     /// - [`Error::Corrupt`] if the stored bytes of a replaced record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
     pub fn insert_many<T: Record>(&self, records: &[T]) -> Result<()> {
         let transaction = self.database.begin_write()?;
@@ -99,6 +101,7 @@ impl Database {
     /// # Errors
     ///
     /// - [`Error::Corrupt`] if the stored bytes are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
     pub fn delete<T: Record>(&self, id: u64) -> Result<bool> {
         let transaction = self.database.begin_write()?;
@@ -117,6 +120,7 @@ impl Database {
     /// # Errors
     ///
     /// - [`Error::Corrupt`] if the stored bytes of a matching record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of `index` contains a dot.
     /// - One of the redb variants if the database cannot be read.
     pub fn find<T: Record>(&self, index: T::Index, key: &[u8]) -> Result<Vec<T>> {
         self.collect_index(index, (Bound::Included(key), Bound::Included(key)))
@@ -127,6 +131,7 @@ impl Database {
     /// # Errors
     ///
     /// - [`Error::Corrupt`] if the stored bytes of a matching record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of `index` contains a dot.
     /// - One of the redb variants if the database cannot be read.
     pub fn view_find<T: Record>(
         &self,
@@ -150,6 +155,7 @@ impl Database {
     /// # Errors
     ///
     /// - [`Error::Corrupt`] if the stored bytes of a matching record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of `index` contains a dot.
     /// - One of the redb variants if the database cannot be read.
     pub fn range<T: Record>(
         &self,
@@ -167,6 +173,7 @@ impl Database {
     /// # Errors
     ///
     /// - [`Error::Corrupt`] if the stored bytes of a matching record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of `index` contains a dot.
     /// - One of the redb variants if the database cannot be read.
     pub fn view_range<T: Record>(
         &self,
@@ -235,12 +242,13 @@ impl Database {
     /// # Errors
     ///
     /// - [`Error::Corrupt`] if the stored bytes of a record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
     pub fn rebuild_indexes<T: Record>(&self) -> Result<()> {
         let transaction = self.database.begin_write()?;
 
         // the same prefix as in `index_table_name`, with the dot, so that the indexes of a table named `users2` stay
-        let prefix = format!("{}.", T::TABLE);
+        let prefix = format!("{}.", table_name::<T>());
         let index_tables: Vec<String> = transaction
             .list_multimap_tables()?
             .map(|table| table.name().to_owned())
@@ -281,6 +289,7 @@ impl Database {
     ///
     /// - [`Error::Corrupt`] if the stored bytes of a record are not a valid `Old`, or `convert` gives an id that a record not yet converted still has.
     /// - [`Error::Encode`] if a new record cannot be serialized.
+    /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
     pub fn migrate<Old: Record, New: Record>(
         &self,
@@ -348,7 +357,7 @@ impl Database {
         bounds: (Bound<&[u8]>, Bound<&[u8]>),
         mut visit: impl FnMut(u64, &T::Archived) -> Result<()>,
     ) -> Result<()> {
-        let index_table = index_table_name::<T>(&index);
+        let index_table = index_table_name::<T>(&index)?;
         let definition = MultimapTableDefinition::<&[u8], u64>::new(&index_table);
 
         let transaction = self.database.begin_read()?;
@@ -450,7 +459,35 @@ fn existing<Table>(opened: result::Result<Table, TableError>) -> Result<Option<T
 
 /// Returns the definition of the table of `T`: id -> rkyv bytes.
 fn rows_definition<T: Record>() -> TableDefinition<'static, u64, &'static [u8]> {
-    TableDefinition::new(T::TABLE)
+    TableDefinition::new(table_name::<T>())
+}
+
+/// Returns [`Record::TABLE`] of `T`, and fails the build if it contains a dot.
+///
+/// Every operation reaches the table name through this function, so the check runs for each record type in use.
+const fn table_name<T: Record>() -> &'static str {
+    // with a dot in it the index tables of two types could have the same name, or one of them the name of a rows table
+    const {
+        assert!(
+            has_no_dot(T::TABLE),
+            "the `TABLE` of a record type contains a dot"
+        )
+    };
+
+    T::TABLE
+}
+
+/// Returns whether `name` contains no dot, the separator of the table and the index in the name of an index table.
+const fn has_no_dot(name: &str) -> bool {
+    let mut rest = name.as_bytes();
+    while let [first, tail @ ..] = rest {
+        if *first == b'.' {
+            return false;
+        }
+        rest = tail;
+    }
+
+    true
 }
 
 /// Validates the stored bytes of the row `id`, and calls `read` on the archived record.
@@ -486,9 +523,17 @@ fn decode<T: Record>(id: u64, bytes: &[u8]) -> Result<T> {
     with_archived::<T, _>(id, bytes, |archived| deserialize(id, archived))
 }
 
-/// Returns the name of the multimap of `index`.
-fn index_table_name<T: Record>(index: &T::Index) -> String {
-    format!("{}.{}", T::TABLE, index.name())
+/// Returns the name of the multimap of `index`, or [`Error::InvalidIndexName`] if the name of the index contains a dot.
+fn index_table_name<T: Record>(index: &T::Index) -> Result<String> {
+    let table = table_name::<T>();
+    let index = index.name();
+
+    // a dot here would let the index tables of two indexes, or of two types, have the same name
+    if !has_no_dot(index) {
+        return Err(Error::InvalidIndexName { table, index });
+    }
+
+    Ok(format!("{table}.{index}"))
 }
 
 /// Opens the multimap of an index of `T` for writing: encoded key -> ids.
@@ -496,7 +541,7 @@ fn open_index<'txn, T: Record>(
     transaction: &'txn WriteTransaction,
     index: &T::Index,
 ) -> Result<MultimapTable<'txn, &'static [u8], u64>> {
-    let index_table = index_table_name::<T>(index);
+    let index_table = index_table_name::<T>(index)?;
     let definition = MultimapTableDefinition::new(&index_table);
 
     let entries = transaction.open_multimap_table(definition)?;

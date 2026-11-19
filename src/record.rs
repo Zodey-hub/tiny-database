@@ -20,7 +20,7 @@ pub trait Record:
                       + Deserialize<Self, HighDeserializer<rancor::Error>>,
     >
 {
-    /// Table name. Unique per database.
+    /// Table name. Unique per database, cannot contain '.'.
     const TABLE: &'static str;
 
     /// The indexes of this type, [`NoIndex`] if it has none.
@@ -37,7 +37,7 @@ pub trait Record:
 
 /// The indexes of a record type: an enum with a variant for each index.
 pub trait Index {
-    /// Returns the name of the index, which is also the suffix of its index table. Unique per record type.
+    /// Returns the name of the index, which is also the suffix of its index table. Unique per record type, and without a dot.
     fn name(&self) -> &'static str;
 }
 

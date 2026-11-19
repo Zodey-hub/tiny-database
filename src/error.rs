@@ -28,6 +28,14 @@ pub enum Error {
     /// The record could not be serialized.
     #[error("cannot encode the record")]
     Encode(#[source] rancor::Error),
+    /// The name of an index contains a dot, which would let two index tables have the same name.
+    #[error("the index name {index:?} of the table {table:?} contains a dot")]
+    InvalidIndexName {
+        /// The table of the record type.
+        table: &'static str,
+        /// The name of the index.
+        index: &'static str,
+    },
     /// The stored bytes of a row are not a valid record, or an index entry points to a missing row.
     #[error("corrupt data in {table} id {id}")]
     Corrupt {

@@ -471,6 +471,60 @@ fn rebuild_indexes_replaces_the_stale_index_entries() -> Result<()> {
     Ok(())
 }
 
+/// A record with an index whose name contains a dot: its table would be the one of the index `name` of the table `notes.by`.
+#[derive(Archive, Serialize, Deserialize)]
+struct Note {
+    id: u64,
+}
+
+enum NoteIndex {
+    ByName,
+}
+
+impl Index for NoteIndex {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::ByName => "by.name",
+        }
+    }
+}
+
+impl Record for Note {
+    const TABLE: &'static str = "notes";
+    type Index = NoteIndex;
+
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn index_keys(&self) -> Vec<(NoteIndex, Vec<u8>)> {
+        vec![(NoteIndex::ByName, key::enc(self.id))]
+    }
+}
+
+#[test]
+fn index_name_with_a_dot_is_an_error() -> Result<()> {
+    let (_directory, db) = temp_db();
+
+    let inserted = db.insert(&Note { id: 1 });
+    let found = db.find::<Note>(NoteIndex::ByName, &key::enc(1u64));
+
+    for result in [inserted, found.map(drop)] {
+        assert!(
+            matches!(
+                result,
+                Err(Error::InvalidIndexName {
+                    table: "notes",
+                    index: "by.name"
+                })
+            ),
+            "{result:?}"
+        );
+    }
+    assert_eq!(db.count::<Note>()?, 0, "the failed insert stores nothing");
+    Ok(())
+}
+
 /// The definition of the multimap of a user index named `name`, to change it behind the back of the library.
 fn user_index(name: &str) -> MultimapTableDefinition<'_, &'static [u8], u64> {
     MultimapTableDefinition::new(name)
