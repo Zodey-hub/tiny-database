@@ -17,7 +17,7 @@ Every read comes in two forms:
 `insert_many` stores several records in one transaction, from a slice or an iterator: one commit instead of one per record, and either all of them are stored or none. `delete_many` removes several records the same way.
 `count` returns the number of records of a type, and `contains` whether a record exists, without reading any of them.
 An index key can be an integer, a `bool`, a float, a `char`, a string, a byte slice or a byte array, see the `key` module for their encodings.
-After a change of `index_keys`, `rebuild_indexes` builds the indexes of a type again from its records: until then `find` and `range` answer from the old keys.
+After a change of `index_keys`, call `rebuild_indexes` before any other write of the type: it builds the indexes again from the records. Until then `find` and `range` answer from the old keys, and a delete or an overwrite removes the new keys instead of the old ones, so the old keys of that record stay behind and make `find` and `range` fail with `Error::Corrupt`.
 After a change of the record type, `migrate::<UserV1, UserV2>(convert)` converts every stored record and its index entries in one transaction: until then the old bytes do not read as the new type.
 
 The rows are read in place, with no copy: the crate enables the `unaligned` feature of rkyv for this, which applies to every use of rkyv in the program.

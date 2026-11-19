@@ -290,7 +290,7 @@ fn view_reads_the_fields_of_the_archived_record() -> Result<()> {
     db.insert(&User::new(1, "Alice", 30, &["admin", "staff"]))?;
 
     let fields = db.view::<User, _>(1, |user| {
-        let last_tag = user.tags.last().map(|tag| tag.to_string());
+        let last_tag = user.tags.last().map(ToString::to_string);
 
         (
             user.id.to_native(),

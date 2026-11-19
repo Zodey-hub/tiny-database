@@ -25,6 +25,7 @@ const TERMINATOR: [u8; 2] = [0x00, 0x01];
 /// Encodes an index value into bytes that sort the way the values do.
 ///
 /// The encoding depends on the type, so an integer literal needs its suffix: `enc(18u8)` and `enc(18u32)` are different keys.
+#[must_use]
 pub fn enc<K: IndexKey>(value: K) -> Vec<u8> {
     let mut encoded = Vec::new();
     value.encode(&mut encoded);
@@ -34,6 +35,7 @@ pub fn enc<K: IndexKey>(value: K) -> Vec<u8> {
 /// The range of the encoded strings that start with `prefix`, for [`Database::range`](crate::Database::range).
 ///
 /// `key::prefix_range("Al")` holds `key::enc("Al")` and `key::enc("Alice")`, but not `key::enc("Bob")` or `key::enc("A")`.
+#[must_use]
 pub fn prefix_range(prefix: &str) -> Range<Vec<u8>> {
     let mut start = Vec::with_capacity(prefix.len());
     push_escaped(prefix.as_bytes(), &mut start);

@@ -526,7 +526,7 @@ const fn table_name<T: Record>() -> &'static str {
         assert!(
             has_no_dot(T::TABLE),
             "the `TABLE` of a record type contains a dot"
-        )
+        );
     };
 
     T::TABLE
