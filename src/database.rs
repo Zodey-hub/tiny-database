@@ -4,7 +4,7 @@ use std::{
     collections::HashSet,
     ops::{Bound, RangeBounds},
     path::Path,
-    result, slice,
+    result,
 };
 
 use redb::{
@@ -42,12 +42,14 @@ impl Database {
     /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
     pub fn insert<T: Record>(&self, record: &T) -> Result<()> {
-        self.insert_many(slice::from_ref(record))
+        self.insert_many([record])
     }
 
     /// Stores each of `records` in one transaction, like [`Self::insert`]: either all of them are stored, or none.
     ///
     /// One commit is much faster than one per record, the file is synced only once. A later record replaces an earlier one with the same id.
+    ///
+    /// The records are borrowed, from a slice (`&users`) or an iterator (`users.iter().filter(...)`).
     ///
     /// # Errors
     ///
@@ -55,7 +57,10 @@ impl Database {
     /// - [`Error::Corrupt`] if the stored bytes of a replaced record are not a valid `T`.
     /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
-    pub fn insert_many<T: Record>(&self, records: &[T]) -> Result<()> {
+    pub fn insert_many<'a, T: Record + 'a>(
+        &self,
+        records: impl IntoIterator<Item = &'a T>,
+    ) -> Result<()> {
         let transaction = self.database.begin_write()?;
 
         for record in records {
@@ -94,6 +99,21 @@ impl Database {
         self.read_row::<T, _>(id, |archived| Ok(read(archived)))
     }
 
+    /// Returns whether there is a record with `id`, without reading it.
+    ///
+    /// # Errors
+    ///
+    /// Returns one of the redb variants if the database cannot be read.
+    pub fn contains<T: Record>(&self, id: u64) -> Result<bool> {
+        let transaction = self.database.begin_read()?;
+
+        let Some(rows) = existing(transaction.open_table(rows_definition::<T>()))? else {
+            return Ok(false);
+        };
+
+        Ok(rows.get(id)?.is_some())
+    }
+
     /// Removes the record with `id` and its index entries, and returns whether it existed.
     ///
     /// # Errors
@@ -102,13 +122,30 @@ impl Database {
     /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
     /// - One of the redb variants if the database cannot be written.
     pub fn delete<T: Record>(&self, id: u64) -> Result<bool> {
+        let deleted = self.delete_many::<T>([id])?;
+        Ok(deleted == 1)
+    }
+
+    /// Removes the records with `ids` in one transaction, like [`Self::delete`], and returns how many of them existed: either all of them are removed, or none.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Corrupt`] if the stored bytes of a record are not a valid `T`.
+    /// - [`Error::InvalidIndexName`] if the name of an index of the type contains a dot.
+    /// - One of the redb variants if the database cannot be written.
+    pub fn delete_many<T: Record>(&self, ids: impl IntoIterator<Item = u64>) -> Result<u64> {
         let transaction = self.database.begin_write()?;
 
-        let existed = remove_row::<T>(&transaction, id)?.is_some();
+        let mut deleted = 0;
+        for id in ids {
+            if remove_row::<T>(&transaction, id)?.is_some() {
+                deleted += 1;
+            }
+        }
 
         transaction.commit()?;
 
-        Ok(existed)
+        Ok(deleted)
     }
 
     /// Returns the records that have `key` in `index`, sorted by id.

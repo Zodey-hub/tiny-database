@@ -8,7 +8,10 @@ use rkyv::rancor;
 pub type Result<T> = result::Result<T, Error>;
 
 /// The error of a database operation.
+///
+/// New variants can come in a minor version, a `match` on it needs a `_` arm.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum Error {
     /// The database file could not be opened or created.
     #[error(transparent)]

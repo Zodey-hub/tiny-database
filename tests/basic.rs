@@ -402,6 +402,59 @@ fn insert_many_stores_every_record_and_its_index_entries() -> Result<()> {
 }
 
 #[test]
+fn insert_many_takes_the_records_from_an_iterator() -> Result<()> {
+    let (_directory, db) = temp_db();
+    let users = [
+        User::new(1, "Alice", 30, &[]),
+        User::new(2, "Bob", 15, &[]),
+        User::new(3, "Carol", 65, &[]),
+    ];
+
+    db.insert_many(users.iter().filter(|user| user.age >= 18))?;
+    let everyone = db.all::<User>()?;
+
+    assert_eq!(ids(&everyone), [1, 3]);
+    Ok(())
+}
+
+#[test]
+fn delete_many_removes_the_records_and_counts_the_existing_ones() -> Result<()> {
+    let (_directory, db) = temp_db();
+    db.insert_many(&[
+        User::new(1, "Alice", 30, &[]),
+        User::new(2, "Bob", 18, &[]),
+        User::new(3, "Alice", 65, &[]),
+    ])?;
+
+    let deleted = db.delete_many::<User>([1, 3, 9])?;
+    let everyone = db.all::<User>()?;
+    let alices = db.find::<User>(UserIndex::Name, &key::enc("Alice"))?;
+
+    assert_eq!(deleted, 2, "the missing id 9 is not counted");
+    assert_eq!(ids(&everyone), [2]);
+    assert_eq!(alices, [], "the removed records leave their index");
+    Ok(())
+}
+
+#[test]
+fn contains_tells_whether_a_record_exists() -> Result<()> {
+    let (_directory, db) = temp_db();
+    let before_any_write = db.contains::<User>(1)?;
+    db.insert(&User::new(1, "Alice", 30, &[]))?;
+
+    let stored = db.contains::<User>(1)?;
+    let missing = db.contains::<User>(2)?;
+    db.delete::<User>(1)?;
+    let deleted = db.contains::<User>(1)?;
+
+    assert!(!before_any_write, "the table does not exist yet");
+    assert!(stored);
+    assert!(!missing);
+    assert!(!deleted);
+    Ok(())
+}
+
+#[test]
 fn insert_many_that_fails_on_a_later_record_stores_none() -> Result<()> {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("test.redb");
