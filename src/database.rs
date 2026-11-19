@@ -9,7 +9,7 @@ use std::{
 
 use redb::{
     MultimapTable, MultimapTableDefinition, ReadableDatabase, ReadableMultimapTable, ReadableTable,
-    TableDefinition, TableError, WriteTransaction,
+    ReadableTableMetadata, TableDefinition, TableError, WriteTransaction,
 };
 use rkyv::rancor;
 
@@ -195,6 +195,21 @@ impl Database {
             visit(archived);
             Ok(())
         })
+    }
+
+    /// Returns the number of records of the type, without reading them.
+    ///
+    /// # Errors
+    ///
+    /// Returns one of the redb variants if the database cannot be read.
+    pub fn count<T: Record>(&self) -> Result<u64> {
+        let transaction = self.database.begin_read()?;
+
+        let Some(rows) = existing(transaction.open_table(rows_definition::<T>()))? else {
+            return Ok(0);
+        };
+
+        Ok(rows.len()?)
     }
 
     /// Calls `read` on the archived row `id`, or returns `None` if there is no such row.

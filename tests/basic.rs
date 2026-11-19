@@ -109,6 +109,7 @@ fn a_new_database_has_no_records() -> Result<()> {
 
     let by_id = db.get::<User>(1)?;
     let everyone = db.all::<User>()?;
+    let count = db.count::<User>()?;
     let found = db.find::<User>(UserIndex::Name, &key::enc("Alice"))?;
     let ranged = db.range::<User>(UserIndex::Age, ..)?;
     let viewed = db.view::<User, _>(1, |user| user.age)?;
@@ -121,6 +122,7 @@ fn a_new_database_has_no_records() -> Result<()> {
     assert_eq!(viewed, None);
     assert_eq!(visited, 0);
     assert_eq!(everyone, []);
+    assert_eq!(count, 0);
     assert_eq!(found, []);
     assert_eq!(ranged, []);
     assert!(!deleted);
@@ -245,6 +247,22 @@ fn range_returns_a_record_with_several_keys_once() -> Result<()> {
 
     // each record at its smallest key within the range: b, c, e
     assert_eq!(ids(&tagged), [1, 2, 3]);
+    Ok(())
+}
+
+#[test]
+fn count_follows_inserts_overwrites_and_deletes() -> Result<()> {
+    let (_directory, db) = temp_db();
+    db.insert(&User::new(1, "Alice", 30, &[]))?;
+    db.insert(&User::new(2, "Bob", 18, &[]))?;
+    db.insert(&User::new(1, "Alice", 31, &[]))?;
+    let after_inserts = db.count::<User>()?;
+
+    db.delete::<User>(2)?;
+    let after_delete = db.count::<User>()?;
+
+    assert_eq!(after_inserts, 2, "an overwrite is not a new record");
+    assert_eq!(after_delete, 1);
     Ok(())
 }
 
