@@ -14,6 +14,7 @@ Every read comes in two forms:
 - `get`, `find`, `range` and `all` deserialize every row into an owned record.
 - Their `view` counterparts (`view`, `view_find`, `view_range`, `view_all`) validate the stored bytes and pass the archived record (`ArchivedUser`) to a closure instead, so a field can be read without allocating the others. The archived record cannot leave the closure: a string of it reads as a `&str`, an integer wider than a byte converts with `to_native()`.
 
+`insert_many` stores several records in one transaction: one commit instead of one per record, and either all of them are stored or none.
 `count` returns the number of records of a type without reading any of them.
 
 The rows are read in place, with no copy: the crate enables the `unaligned` feature of rkyv for this, which applies to every use of rkyv in the program.
@@ -72,8 +73,10 @@ fn main() -> tiny_database::Result<()> {
     let db = Database::open("app.redb")?;
 
     db.insert(&User { id: 1, name: "Alice".to_owned(), age: 30 })?;
-    db.insert(&User { id: 2, name: "Alice".to_owned(), age: 65 })?;
-    db.insert(&User { id: 3, name: "Bob".to_owned(), age: 25 })?;
+    db.insert_many(&[
+        User { id: 2, name: "Alice".to_owned(), age: 65 },
+        User { id: 3, name: "Bob".to_owned(), age: 25 },
+    ])?;
 
     // deserialized: by id
     let first = db.get::<User>(1)?;

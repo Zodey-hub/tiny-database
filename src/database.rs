@@ -4,7 +4,7 @@ use std::{
     collections::HashSet,
     ops::{Bound, RangeBounds},
     path::Path,
-    result,
+    result, slice,
 };
 
 use redb::{
@@ -40,12 +40,27 @@ impl Database {
     /// - [`Error::Corrupt`] if the stored bytes of the replaced record are not a valid `T`.
     /// - One of the redb variants if the database cannot be written.
     pub fn insert<T: Record>(&self, record: &T) -> Result<()> {
-        let bytes = rkyv::to_bytes::<rancor::Error>(record).map_err(Error::Encode)?;
+        self.insert_many(slice::from_ref(record))
+    }
 
+    /// Stores each of `records` in one transaction, like [`Self::insert`]: either all of them are stored, or none.
+    ///
+    /// One commit is much faster than one per record, the file is synced only once. A later record replaces an earlier one with the same id.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::Encode`] if a record cannot be serialized.
+    /// - [`Error::Corrupt`] if the stored bytes of a replaced record are not a valid `T`.
+    /// - One of the redb variants if the database cannot be written.
+    pub fn insert_many<T: Record>(&self, records: &[T]) -> Result<()> {
         let transaction = self.database.begin_write()?;
 
-        remove_row::<T>(&transaction, record.id())?;
-        insert_row(&transaction, record, &bytes)?;
+        for record in records {
+            let bytes = rkyv::to_bytes::<rancor::Error>(record).map_err(Error::Encode)?;
+
+            remove_row::<T>(&transaction, record.id())?;
+            insert_row(&transaction, record, &bytes)?;
+        }
 
         transaction.commit()?;
 

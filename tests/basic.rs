@@ -371,6 +371,61 @@ fn insert_that_fails_on_an_index_stores_nothing() -> Result<()> {
 }
 
 #[test]
+fn insert_many_stores_every_record_and_its_index_entries() -> Result<()> {
+    let (_directory, db) = temp_db();
+    db.insert(&User::new(1, "Alice", 30, &[]))?;
+    let batch = [
+        User::new(2, "Bob", 18, &[]),
+        User::new(1, "Carol", 65, &[]),
+        User::new(3, "Dave", 40, &[]),
+        User::new(3, "Bob", 41, &[]),
+    ];
+
+    db.insert_many(&batch)?;
+    let everyone = db.all::<User>()?;
+    let alices = db.find::<User>(UserIndex::Name, &key::enc("Alice"))?;
+    let bobs = db.find::<User>(UserIndex::Name, &key::enc("Bob"))?;
+    let daves = db.find::<User>(UserIndex::Name, &key::enc("Dave"))?;
+
+    assert_eq!(
+        everyone,
+        [batch[1].clone(), batch[0].clone(), batch[3].clone()]
+    );
+    assert_eq!(alices, [], "the replaced record leaves its index");
+    assert_eq!(ids(&bobs), [2, 3]);
+    assert_eq!(
+        daves,
+        [],
+        "a later record of the batch replaces an earlier one"
+    );
+    Ok(())
+}
+
+#[test]
+fn insert_many_that_fails_on_a_later_record_stores_none() -> Result<()> {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("test.redb");
+    let database = redb::Database::create(&path)?;
+    let transaction = database.begin_write()?;
+    // only a user with a tag writes this index, so the first user of the batch is stored before the second one fails
+    transaction.open_table(TableDefinition::<u64, &[u8]>::new("users.tag"))?;
+    transaction.commit()?;
+    drop(database);
+    let db = Database::open(&path)?;
+    let batch = [
+        User::new(1, "Alice", 30, &[]),
+        User::new(2, "Bob", 18, &["admin"]),
+    ];
+
+    let error = db.insert_many(&batch).unwrap_err();
+    let count = db.count::<User>()?;
+
+    assert!(matches!(error, Error::Table(_)), "{error:?}");
+    assert_eq!(count, 0);
+    Ok(())
+}
+
+#[test]
 fn corrupt_row_is_an_error() -> Result<()> {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("test.redb");
