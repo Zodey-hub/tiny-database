@@ -86,6 +86,7 @@ impl Database {
     /// Calls `read` on the archived record with `id` without deserializing it, and returns its result, or `None` if there is no such record.
     ///
     /// The archived record borrows the stored bytes, so it cannot leave the closure: return the values that are needed from it.
+    /// A string of it reads as a `&str`, an integer wider than a byte converts with `to_native()`.
     ///
     /// # Errors
     ///
@@ -272,6 +273,9 @@ impl Database {
 
     /// Rebuilds every index of the type from its stored records, after a change of [`Record::index_keys`].
     ///
+    /// Call it before any other write of the type. Until then [`Self::find`] and [`Self::range`] answer from the old keys, and a delete or an overwrite removes the new keys of the record instead of the old ones,
+    /// so its old keys stay behind and make `find` and `range` fail with [`Error::Corrupt`].
+    ///
     /// The index tables of the type are dropped first, so an index that `index_keys` no longer returns disappears; a table is of the type if its name starts with `T::TABLE` and a dot. Either the whole rebuild is done or nothing changes.
     ///
     /// # Errors
@@ -317,7 +321,7 @@ impl Database {
 
     /// Replaces every record of `Old` with the `New` record that `convert` makes of it, with the index entries of `New`, in one transaction.
     ///
-    /// For a change of the record type: `Old` reads the stored bytes as they are, `New` is the type from now on. Either every record is converted or none.
+    /// For a change of the record type: `Old` reads the stored bytes as they are, `New` is the type from now on, and until the migration the stored bytes do not read as `New`. Either every record is converted or none.
     /// The two types normally share their [`Record::TABLE`]; if they do not, the records move to the table of `New` and the table of `Old` is left empty.
     ///
     /// # Errors

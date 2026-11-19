@@ -32,6 +32,7 @@ pub trait Record:
     /// Returns the index entries of the record: pairs of an index and a key encoded with [`key::enc`](crate::key::enc).
     ///
     /// A multi-valued field returns a pair for each of its values, an index without a pair gets no entry.
+    /// After a change of the keys it returns, call [`Database::rebuild_indexes`](crate::Database::rebuild_indexes) before any other write of the type.
     fn index_keys(&self) -> Vec<(Self::Index, Vec<u8>)>;
 }
 

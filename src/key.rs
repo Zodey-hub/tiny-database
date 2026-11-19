@@ -10,6 +10,7 @@
 //! - `[u8]`, `Vec<u8>`, `str` and `String`: the bytes with every `0x00` escaped as `0x00 0xFF`, then the terminator `0x00 0x01`.
 //!
 //! - Tuples of up to four fields: the encodings of the fields one after the other, a key of a multi-field index.
+//!   It sorts by the first field, and by the second one within it, so one range answers "equal on the first field, within a range on the second".
 //!
 //! No encoding is a prefix of another one of the same type, so the encodings of several values can be concatenated into one multi-field key.
 //! `usize` and `isize` have no encoding, their width depends on the platform: cast them to a fixed-width integer.

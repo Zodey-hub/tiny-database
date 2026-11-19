@@ -7,20 +7,6 @@ A query language, joins, a schema version and unique constraints are left to the
 ## Example
 
 A `User` with an index on each field, and a composite index on both.
-The key of a composite index is a tuple of the fields, its encoding is the concatenation of the encoded fields: it sorts by the first field, and by the second one within it, so one `range` answers "equal on the first field, within a range on the second".
-
-Every read comes in two forms:
-
-- `get`, `find`, `range` and `all` deserialize every row into an owned record.
-- Their `view` counterparts (`view`, `view_find`, `view_range`, `view_all`) validate the stored bytes and pass the archived record (`ArchivedUser`) to a closure instead, so a field can be read without allocating the others. The archived record cannot leave the closure: a string of it reads as a `&str`, an integer wider than a byte converts with `to_native()`.
-
-`insert_many` stores several records in one transaction, from a slice or an iterator: one commit instead of one per record, and either all of them are stored or none. `delete_many` removes several records the same way.
-`count` returns the number of records of a type, and `contains` whether a record exists, without reading any of them.
-An index key can be an integer, a `bool`, a float, a `char`, a string, a byte slice or a byte array, see the `key` module for their encodings.
-After a change of `index_keys`, call `rebuild_indexes` before any other write of the type: it builds the indexes again from the records. Until then `find` and `range` answer from the old keys, and a delete or an overwrite removes the new keys instead of the old ones, so the old keys of that record stay behind and make `find` and `range` fail with `Error::Corrupt`.
-After a change of the record type, `migrate::<UserV1, UserV2>(convert)` converts every stored record and its index entries in one transaction: until then the old bytes do not read as the new type.
-
-The rows are read in place, with no copy: the crate enables the `unaligned` feature of rkyv for this, which applies to every use of rkyv in the program.
 
 ```rust
 use std::error::Error;
@@ -91,7 +77,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // deserialized: the names that start with a prefix
     let als = db.range::<User>(UserIndex::Name, key::prefix_range("Al"))?;
 
-    // deserialized: equality on the first field of the composite index, a range on the second one
+    // deserialized: equality on the first field of the composite index, a range on the second one;
+    // the composite key sorts by the name, then by the age within it, so the whole range of the age
+    // (`u8::MIN..=u8::MAX`) would answer "equal on the name" alone
     let young_alices = key::enc(("Alice", 18u8))..=key::enc(("Alice", 30u8));
     let young_alices = db.range::<User>(UserIndex::NameAge, young_alices)?;
 
@@ -116,4 +104,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-The `NameAge` index alone also answers "equal on the name": ask for the whole range of the age, `key::enc(("Alice", u8::MIN))..=key::enc(("Alice", u8::MAX))`.
+## Reads
+
+Every read comes in two forms:
+
+- `get`, `find`, `range` and `all` deserialize every row into an owned record.
+- `view`, `view_find`, `view_range` and `view_all` pass the archived record (`ArchivedUser`) to a closure instead, so a field can be read without building the others.
+
+The rows are read in place, with no copy: the crate enables the `unaligned` feature of rkyv for this, which applies to every use of rkyv in the program.
+
+## Changing a record type
+
+- After a change of `index_keys`, call `rebuild_indexes` before any other write of the type.
+- After a change of the record type itself, `migrate::<UserV1, UserV2>(convert)` converts every stored record.
